@@ -15,14 +15,20 @@ type Message struct {
 
 var (
     answerChan = make(chan string) // Global variable for the channel
-    userPeerConnection *webrtc.PeerConnection
+    userPeerConnection *webrtc.PeerConnection = nil
     connectionEstablishedChan = make(chan bool)
 )
 
-func createPeerConnection() (*webrtc.PeerConnection, error) {
+func createPeerConnection(conn *websocket.Conn) (*webrtc.PeerConnection, error) {
     config := webrtc.Configuration{
         ICEServers: []webrtc.ICEServer{
-            {URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"}}, // Add your STUN server here
+            {
+                URLs: []string{
+                    "stun:stun.l.google.com:19302", 
+                    "stun:stun1.l.google.com:19302", 
+                    "stun:stun2.l.google.com:19302",
+                },
+            }, 
         },
     }
 
@@ -31,6 +37,19 @@ func createPeerConnection() (*webrtc.PeerConnection, error) {
 	if err != nil {
 		return nil, err
 	}
+
+    peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+        if candidate == nil {
+            return
+        }
+        // Send this candidate to the remote peer
+        fmt.Println("New ICE candidate:", candidate.ToJSON())
+        iceCandidateMsg := Message{
+            Type:    "iceCandidate",
+            Content: candidate.ToJSON().Candidate,
+        }
+        conn.WriteJSON(iceCandidateMsg)
+    })
 
 	// Set the handler for ICE connection state
 	// This will notify you when the peer has connected/disconnected
@@ -45,6 +64,18 @@ func createPeerConnection() (*webrtc.PeerConnection, error) {
             fmt.Println("Connection failed!")
         }    
 	})
+
+
+    videoTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: "video/h264"}, "video", "pion")
+    if err != nil {
+        return nil, err
+    }
+
+    // Add the track to the peer connection
+    _, err = peerConnection.AddTrack(videoTrack)
+    if err != nil {
+        return nil, err
+    }
     
     return peerConnection, nil 
 }
@@ -88,7 +119,7 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection) error {
 
 
 func establishConnectionWithPeer(conn *websocket.Conn){
-    peerConnection, err := createPeerConnection()
+    peerConnection, err := createPeerConnection(conn)
     if err != nil {
         panic(err)
     }
@@ -130,7 +161,7 @@ func establishConnectionWithPeer(conn *websocket.Conn){
 
 func handleOffer(conn *websocket.Conn, msg Message){
     fmt.Println("Received offer")
-    peerConnection, err := createPeerConnection()
+    peerConnection, err := createPeerConnection(conn)
     if err != nil {
         panic(err)
     }
@@ -165,8 +196,30 @@ func handleOffer(conn *websocket.Conn, msg Message){
     connectionEstablishedChan <- true
 }
 
-func handleAnswer(conn *websocket.Conn, msg Message){
+func handleAnswer(msg Message){
     answerChan <- msg.Content
+}
+
+func addICECandidate(msg Message){
+    fmt.Println("Received ICE Candidate:", msg.Content)
+
+    if (userPeerConnection == nil){
+        fmt.Println("Peer connection not created yet. Returning...")
+        return
+    }
+
+    // Create a new ICE candidate from the received content
+    candidate := webrtc.ICECandidateInit{
+        Candidate: msg.Content, 
+    }
+
+    // Add the ICE candidate to the peer connection
+    if err := userPeerConnection.AddICECandidate(candidate); err != nil {
+        log.Println("Failed to add ICE candidate:", err)
+        return
+    }
+
+    fmt.Println("ICE Candidate added successfully.")
 }
 
 func Run() {
@@ -195,7 +248,9 @@ func Run() {
             } else if (inputMsg.Type == "offer"){
                 go handleOffer(conn, inputMsg)
             } else if (inputMsg.Type == "answer"){
-                go handleAnswer(conn, inputMsg)
+                go handleAnswer(inputMsg)
+            } else if(inputMsg.Type == "iceCandidate"){
+                go addICECandidate(inputMsg)
             }
         }
     }(conn)
@@ -204,14 +259,13 @@ func Run() {
         Type:    "join",
         Content: "true",
     }
-    // fmt.Println(msg)
     conn.WriteJSON(msg)
 
 
     <-connectionEstablishedChan
     fmt.Println("Successfully established a WebRTC connection between clients")
 
-    openCameraFeed(userPeerConnection)
+    // openCameraFeed(userPeerConnection)
 
 	select {}
 }

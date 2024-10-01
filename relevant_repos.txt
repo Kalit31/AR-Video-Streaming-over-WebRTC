@@ -32,3 +32,5 @@ https://github.com/asticode/go-astiav
 https://jsfiddle.net/z17q28cd/
 
 ffmpeg -f v4l2 -i /dev/video0 -f mpegts udp://224.0.0.251:5353
+
+netstat -anu|sort -nk4

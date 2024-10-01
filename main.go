@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"websocket_tests/client"
-	"websocket_tests/server"
+	server "websocket_tests/signalling_server"
 )
 
 func main(){
