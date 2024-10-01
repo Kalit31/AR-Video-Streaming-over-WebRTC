@@ -10,11 +10,11 @@ build:
 	go build -o $(BIN_DIR)/$(APP_NAME) $(GO_FILES)
 
 # Run the server
-run-server: build
+run-server: 
 	./$(BIN_DIR)/$(APP_NAME) --server
 
 # Run the client
-run-client: build
+run-client: 
 	./$(BIN_DIR)/$(APP_NAME) --client
 
 # Clean up build artifacts

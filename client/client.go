@@ -17,9 +17,10 @@ var (
     answerChan = make(chan string) // Global variable for the channel
     userPeerConnection *webrtc.PeerConnection = nil
     connectionEstablishedChan = make(chan bool)
+    userVideoTrack *webrtc.TrackLocalStaticSample = nil
 )
 
-func createPeerConnection(conn *websocket.Conn) (*webrtc.PeerConnection, error) {
+func createPeerConnection(conn *websocket.Conn) (*webrtc.PeerConnection, *webrtc.TrackLocalStaticSample, error) {
     config := webrtc.Configuration{
         ICEServers: []webrtc.ICEServer{
             {
@@ -35,7 +36,7 @@ func createPeerConnection(conn *websocket.Conn) (*webrtc.PeerConnection, error) 
 	// Create a new RTCPeerConnection
 	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
     peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
@@ -68,31 +69,19 @@ func createPeerConnection(conn *websocket.Conn) (*webrtc.PeerConnection, error) 
 
     videoTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: "video/h264"}, "video", "pion")
     if err != nil {
-        return nil, err
+        return nil, nil, err
     }
 
     // Add the track to the peer connection
     _, err = peerConnection.AddTrack(videoTrack)
     if err != nil {
-        return nil, err
+        return nil, nil, err
     }
     
-    return peerConnection, nil 
+    return peerConnection, videoTrack, nil 
 }
 
-func openCameraFeed(peerConnection *webrtc.PeerConnection) error {
-    // Implement camera capture and streaming logic here
-    // This is a placeholder and should be replaced with actual video capture logic
-    videoTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: "video/h264"}, "video", "pion")
-    if err != nil {
-        return err
-    }
-
-    // Add the track to the peer connection
-    _, err = peerConnection.AddTrack(videoTrack)
-    if err != nil {
-        return err
-    }
+func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.TrackLocalStaticSample) error {
 
     // Handle incoming tracks
     peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -100,26 +89,27 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection) error {
         go func() {
             for {
                 // Read frames from the track
-                _, _, err := track.ReadRTP()
+                pkt, _, err := track.ReadRTP()
                 if err != nil {
                     log.Println("Error reading RTP:", err)
                     return
                 }
+
                 // Handle the frames as needed
+                fmt.Println("Received pkt: ", pkt);
                 // Here we would typically render them to a video element
             }
         }()
     })
 
-    fmt.Println("Tracks are setup. Starting to write to them...")
+    fmt.Println("Writing to tracks")
     go writeH264ToTrack(videoTrack)
 
     return nil
 }
 
-
 func establishConnectionWithPeer(conn *websocket.Conn){
-    peerConnection, err := createPeerConnection(conn)
+    peerConnection, videoTrack, err := createPeerConnection(conn)
     if err != nil {
         panic(err)
     }
@@ -156,12 +146,13 @@ func establishConnectionWithPeer(conn *websocket.Conn){
     }
 
     userPeerConnection = peerConnection
+    userVideoTrack = videoTrack
     connectionEstablishedChan <- true
 }
 
 func handleOffer(conn *websocket.Conn, msg Message){
     fmt.Println("Received offer")
-    peerConnection, err := createPeerConnection(conn)
+    peerConnection, videoTrack, err := createPeerConnection(conn)
     if err != nil {
         panic(err)
     }
@@ -193,6 +184,7 @@ func handleOffer(conn *websocket.Conn, msg Message){
     conn.WriteJSON(answerMsg)
 
     userPeerConnection = peerConnection
+    userVideoTrack = videoTrack
     connectionEstablishedChan <- true
 }
 
@@ -265,7 +257,7 @@ func Run() {
     <-connectionEstablishedChan
     fmt.Println("Successfully established a WebRTC connection between clients")
 
-    // openCameraFeed(userPeerConnection)
+    openCameraFeed(userPeerConnection, userVideoTrack)
 
 	select {}
 }
