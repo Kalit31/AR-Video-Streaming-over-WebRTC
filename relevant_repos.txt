@@ -1,0 +1,34 @@
+https://github.com/njpietrow/Filter.io
+https://github.com/tensorflow/tfjs-models/tree/master/body-segmentation
+https://github.com/pion/awesome-pion
+
+
+
+real-time quality - network
+
+ffmpeg - encoding/decoding
+
+
+base frame + delta diff  
+h264 encoding 
+
+
+
+
+client1             client2 
+os.exec(ffmpeg)     os.exec(ffmpeg)
+
+
+https://github.com/FFmpeg/FFmpeg
+https://github.com/AlexEidt/Vidio
+https://github.com/njpietrow/Filter.io
+https://github.com/AgustinSRG/webrtc-video-filter
+https://github.com/hybridgroup/cvscope/
+https://github.com/ashellunts/ffmpeg-to-webrtc
+https://github.com/pion/webrtc
+https://github.com/pion/example-webrtc-applications
+https://github.com/pion/example-webrtc-applications/tree/master/ffmpeg-send
+https://github.com/asticode/go-astiav
+https://jsfiddle.net/z17q28cd/
+
+ffmpeg -f v4l2 -i /dev/video0 -f mpegts udp://224.0.0.251:5353
