@@ -1,14 +1,9 @@
 package client
 
 import (
-	"bufio"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/asticode/go-astiav"
@@ -30,6 +25,12 @@ var (
 	encodeCodecContext   *astiav.CodecContext
 	encodePacket         *astiav.Packet
 
+	filterFrame       *astiav.Frame
+	filterGraph       *astiav.FilterGraph
+	brightnessFilter  *astiav.FilterContext
+	buffersinkCtx    *astiav.FilterContext
+	buffersrcCtx     *astiav.FilterContext
+
 	pts int64
 	err error
 )
@@ -37,6 +38,10 @@ var (
 const h264FrameDuration = time.Millisecond * 20
 
 func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
+	/*
+	This function continuously reads video frames from a specified input, decodes them, 
+	scales them, encodes them back into H.264 format, and writes the samples to a WebRTC track.
+	*/
 	astiav.RegisterAllDevices()
 
 	initTestSrc()
@@ -44,7 +49,6 @@ func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
 
 	ticker := time.NewTicker(h264FrameDuration)
 	for ; true; <-ticker.C {
-		// Read frame from lavfi
 		if err = inputFormatContext.ReadFrame(decodePacket); err != nil {
 			if errors.Is(err, astiav.ErrEof) {
 				break
@@ -121,21 +125,26 @@ func initTestSrc() {
 
 	videoStream = inputFormatContext.Streams()[0]
 
+	// Find decoder
 	decodeCodec := astiav.FindDecoder(videoStream.CodecParameters().CodecID())
 	if decodeCodec == nil {
 		panic("FindDecoder returned nil")
 	}
 
+	// Find decoder
 	if decodeCodecContext = astiav.AllocCodecContext(decodeCodec); decodeCodecContext == nil {
 		panic(err)
 	}
 
+	// Update codec context
 	if err = videoStream.CodecParameters().ToCodecContext(decodeCodecContext); err != nil {
 		panic(err)
 	}
 
+	// Set framerate
 	decodeCodecContext.SetFramerate(inputFormatContext.GuessFrameRate(videoStream, nil))
 
+	// Open codec context
 	if err = decodeCodecContext.Open(decodeCodec, nil); err != nil {
 		panic(err)
 	}
@@ -148,22 +157,26 @@ func initVideoEncoding() {
 	if encodeCodecContext != nil {
 		return
 	}
-
+	
+	// Find encoder
 	h264Encoder := astiav.FindEncoder(astiav.CodecIDH264)
 	if h264Encoder == nil {
 		panic("No H264 Encoder Found")
 	}
 
+	// Alloc codec context
 	if encodeCodecContext = astiav.AllocCodecContext(h264Encoder); encodeCodecContext == nil {
 		panic("Failed to AllocCodecContext Decoder")
 	}
 
+	// Update codec context
 	encodeCodecContext.SetPixelFormat(astiav.PixelFormatYuv420P)
 	encodeCodecContext.SetSampleAspectRatio(decodeCodecContext.SampleAspectRatio())
 	encodeCodecContext.SetTimeBase(astiav.NewRational(1, 30))
 	encodeCodecContext.SetWidth(decodeCodecContext.Width())
 	encodeCodecContext.SetHeight(decodeCodecContext.Height())
 
+	// Open codec context
 	if err = encodeCodecContext.Open(h264Encoder, nil); err != nil {
 		panic(err)
 	}
@@ -184,6 +197,81 @@ func initVideoEncoding() {
 	scaledFrame = astiav.AllocFrame()
 }
 
+func initFilters() {
+	filterGraph = astiav.AllocFilterGraph()
+	if filterGraph == nil {
+		panic("filtergraph could not be created")
+	}
+
+	// Alloc outputs
+	outputs := astiav.AllocFilterInOut()
+	if outputs == nil {
+		err = errors.New("main: outputs is nil")
+		return
+	}
+
+	// Alloc inputs
+	inputs := astiav.AllocFilterInOut()
+	if inputs == nil {
+		err = errors.New("main: inputs is nil")
+		return
+	}
+
+	// Create buffersrc and buffersink filter contexts
+	buffersrc := astiav.FindFilterByName("buffer")
+	if buffersrc == nil {
+		panic("buffersrc is nil")
+	}
+
+	buffersink := astiav.FindFilterByName("buffersink")
+	if buffersink == nil {
+		panic("buffersink is nil")
+	}
+
+	var err error
+	if buffersrcCtx, err = filterGraph.NewFilterContext(buffersrc, "in", astiav.FilterArgs{
+		"pix_fmt":      strconv.Itoa(int(decodeCodecContext.PixelFormat())),
+		"video_size":   strconv.Itoa(decodeCodecContext.Width()) + "x" + strconv.Itoa(decodeCodecContext.Height()),
+		"time_base":    decodeCodecContext.TimeBase().String(),
+	}); err != nil {
+		panic(err)
+	}
+
+	if buffersinkCtx, err = filterGraph.NewFilterContext(buffersink, "in", nil); err != nil {
+		err = fmt.Errorf("main: creating buffersink context failed: %w", err)
+		return
+	}
+	
+	// Update outputs
+	outputs.SetName("in")
+	outputs.SetFilterContext(buffersrcCtx)
+	outputs.SetPadIdx(0)
+	outputs.SetNext(nil)
+
+	// Update inputs
+	inputs.SetName("out")
+	inputs.SetFilterContext(buffersinkCtx)
+	inputs.SetPadIdx(0)
+	inputs.SetNext(nil)
+
+
+	if buffersinkCtx, err = filterGraph.NewFilterContext(buffersink, "out", nil); err != nil {
+		panic(err)
+	}
+
+	// Link buffersrc and buffersink through the eq filter for brightness
+	if err = filterGraph.Parse("eq=brightness=0.5", inputs, outputs); err != nil {
+		panic(err)
+	}
+
+	if err = filterGraph.Configure(); err != nil {
+		err = fmt.Errorf("main: configuring filter failed: %w", err)
+		return
+	}
+
+	filterFrame = astiav.AllocFrame()
+}
+
 func freeVideoCoding() {
 	inputFormatContext.CloseInput()
 	inputFormatContext.Free()
@@ -197,46 +285,3 @@ func freeVideoCoding() {
 	encodeCodecContext.Free()
 	encodePacket.Free()
 }
-
-// Read from stdin until we get a newline
-func readUntilNewline() (in string) {
-	var err error
-
-	r := bufio.NewReader(os.Stdin)
-	for {
-		in, err = r.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			panic(err)
-		}
-
-		if in = strings.TrimSpace(in); len(in) > 0 {
-			break
-		}
-	}
-
-	fmt.Println("")
-	return
-}
-
-// JSON encode + base64 a SessionDescription
-func encode(obj *webrtc.SessionDescription) string {
-	b, err := json.Marshal(obj)
-	if err != nil {
-		panic(err)
-	}
-
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-// Decode a base64 and unmarshal JSON into a SessionDescription
-func decode(in string, obj *webrtc.SessionDescription) {
-	b, err := base64.StdEncoding.DecodeString(in)
-	if err != nil {
-		panic(err)
-	}
-
-	if err = json.Unmarshal(b, obj); err != nil {
-		panic(err)
-	}
-}
-
