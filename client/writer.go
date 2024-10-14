@@ -20,8 +20,6 @@ var (
 	decodeFrame        *astiav.Frame
 	videoStream        *astiav.Stream
 
-	softwareScaleContext *astiav.SoftwareScaleContext
-	scaledFrame          *astiav.Frame
 	encodeCodecContext   *astiav.CodecContext
 	encodePacket         *astiav.Packet
 
@@ -45,6 +43,7 @@ func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
 	astiav.RegisterAllDevices()
 
 	initTestSrc()
+	initFilters() 
 	defer freeVideoCoding()
 
 	ticker := time.NewTicker(h264FrameDuration)
@@ -72,36 +71,44 @@ func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
 				panic(err)
 			}
 
-			// Init the Scaling+Encoding. Can't be started until we know info on input video
 			initVideoEncoding()
 
-			// Scale the video
-			if err = softwareScaleContext.ScaleFrame(decodeFrame, scaledFrame); err != nil {
-				panic(err)
+			if err = buffersrcCtx.BuffersrcAddFrame(decodeFrame, astiav.NewBuffersrcFlags(astiav.BuffersrcFlagKeepRef)); err != nil {
+				err = fmt.Errorf("main: adding frame failed: %w", err)
+				return
 			}
 
-			// We don't care about the PTS, but encoder complains if unset
-			pts++
-			scaledFrame.SetPts(pts)
+			for{
+				filterFrame.Unref()
 
-			// Encode the frame
-			if err = encodeCodecContext.SendFrame(scaledFrame); err != nil {
-				panic(err)
-			}
-
-			for {
-				// Read encoded packets and write to file
-				encodePacket = astiav.AllocPacket()
-				if err = encodeCodecContext.ReceivePacket(encodePacket); err != nil {
+				if err = buffersinkCtx.BuffersinkGetFrame(filterFrame, astiav.NewBuffersinkFlags()); err != nil {
 					if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
 						break
 					}
 					panic(err)
 				}
-
-				// Write H264 to track
-				if err = track.WriteSample(media.Sample{Data: encodePacket.Data(), Duration: h264FrameDuration}); err != nil {
+	
+				pts++
+				filterFrame.SetPts(pts)
+	
+				// Encode the frame
+				if err = encodeCodecContext.SendFrame(filterFrame); err != nil {
 					panic(err)
+				}
+	
+				for {
+					// Read encoded packets and write to file
+					encodePacket = astiav.AllocPacket()
+					if err = encodeCodecContext.ReceivePacket(encodePacket); err != nil {
+						if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
+							break
+						}
+						panic(err)
+					}
+					// Write H264 to track
+					if err = track.WriteSample(media.Sample{Data: encodePacket.Data(), Duration: h264FrameDuration}); err != nil {
+						panic(err)
+					}
 				}
 			}
 		}
@@ -180,21 +187,6 @@ func initVideoEncoding() {
 	if err = encodeCodecContext.Open(h264Encoder, nil); err != nil {
 		panic(err)
 	}
-
-	softwareScaleContext, err = astiav.CreateSoftwareScaleContext(
-		decodeCodecContext.Width(),
-		decodeCodecContext.Height(),
-		decodeCodecContext.PixelFormat(),
-		decodeCodecContext.Width(),
-		decodeCodecContext.Height(),
-		astiav.PixelFormatYuv420P,
-		astiav.NewSoftwareScaleContextFlags(astiav.SoftwareScaleContextFlagBilinear),
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	scaledFrame = astiav.AllocFrame()
 }
 
 func initFilters() {
@@ -232,7 +224,7 @@ func initFilters() {
 	if buffersrcCtx, err = filterGraph.NewFilterContext(buffersrc, "in", astiav.FilterArgs{
 		"pix_fmt":      strconv.Itoa(int(decodeCodecContext.PixelFormat())),
 		"video_size":   strconv.Itoa(decodeCodecContext.Width()) + "x" + strconv.Itoa(decodeCodecContext.Height()),
-		"time_base":    decodeCodecContext.TimeBase().String(),
+		"time_base":    videoStream.TimeBase().String(),
 	}); err != nil {
 		panic(err)
 	}
@@ -241,7 +233,7 @@ func initFilters() {
 		err = fmt.Errorf("main: creating buffersink context failed: %w", err)
 		return
 	}
-	
+
 	// Update outputs
 	outputs.SetName("in")
 	outputs.SetFilterContext(buffersrcCtx)
@@ -253,11 +245,6 @@ func initFilters() {
 	inputs.SetFilterContext(buffersinkCtx)
 	inputs.SetPadIdx(0)
 	inputs.SetNext(nil)
-
-
-	if buffersinkCtx, err = filterGraph.NewFilterContext(buffersink, "out", nil); err != nil {
-		panic(err)
-	}
 
 	// Link buffersrc and buffersink through the eq filter for brightness
 	if err = filterGraph.Parse("eq=brightness=0.5", inputs, outputs); err != nil {
@@ -280,8 +267,6 @@ func freeVideoCoding() {
 	decodePacket.Free()
 	decodeFrame.Free()
 
-	scaledFrame.Free()
-	softwareScaleContext.Free()
 	encodeCodecContext.Free()
 	encodePacket.Free()
 }
