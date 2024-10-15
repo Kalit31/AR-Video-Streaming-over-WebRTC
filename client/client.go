@@ -86,6 +86,8 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
     // Handle incoming tracks
     peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
         fmt.Println("Track received:", track.Kind())
+        fmt.Println("Track Codec:", track.Codec())
+        fmt.Println("Track Codec MimeType:", track.Codec().MimeType)
         go func() {
             for {
                 // Read frames from the track
@@ -94,9 +96,9 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
                     log.Println("Error reading RTP:", err)
                     return
                 }
-
-                // Handle the frames as needed and render into a video element
                 
+                // Handle the frames as needed and render into a video element
+                // fmt.Println(packet)
             }
         }()
     })
