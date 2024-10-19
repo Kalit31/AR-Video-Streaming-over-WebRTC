@@ -34,3 +34,20 @@ https://jsfiddle.net/z17q28cd/
 ffmpeg -f v4l2 -i /dev/video0 -f mpegts udp://224.0.0.251:5353
 
 netstat -anu|sort -nk4
+
+metric - time, energy consumption
+
+
+Oct 16th - 
+look up energy consumption models for mobile phones/edge devices
+
+drain based on the processor/cpu/RAM - battery drain emulators/simulators - estimate of energy consumption for the program.
+
+monitoring tools for battery drains 
+
+TPUs = Tensor Processing Units
+
+Tasks:
+1. Start timing on local machine
+2. Integrate AR filters with WebRTC video stream
+3. WebRTC support for Rasberry Pi.
