@@ -49,5 +49,8 @@ TPUs = Tensor Processing Units
 
 Tasks:
 1. Start timing on local machine
-2. Integrate AR filters with WebRTC video stream
-3. WebRTC support for Rasberry Pi.
+2. Integrate AR filters with WebRTC video stream -> stuck with yuv422p to rgb conversion
+3. WebRTC support for Rasberry Pi. -> jetson 
+4. Devkit for VR -> hardware test platforms
+5. Look for other people working on same problem, google scholar
+6. 

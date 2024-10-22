@@ -104,7 +104,8 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
     })
 
     fmt.Println("Writing to tracks")
-    go writeH264ToTrack(videoTrack)
+    go writeH264ToTrackAR(videoTrack)
+    // go writeH264ToTrack(videoTrack)
 
     return nil
 }
