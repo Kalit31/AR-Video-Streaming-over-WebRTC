@@ -53,4 +53,3 @@ Tasks:
 3. WebRTC support for Rasberry Pi. -> jetson 
 4. Devkit for VR -> hardware test platforms
 5. Look for other people working on same problem, google scholar
-6. 

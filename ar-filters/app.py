@@ -12,8 +12,8 @@ import struct
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh_videos = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5, min_tracking_confidence=0.3)
-eye = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/eye.jpg')
-mouth = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/smile.png')
+eye = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/filter_imgs/eye.jpg')
+mouth = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/filter_imgs/smile.png')
 
 def detectFacialLandmarks(image, face_mesh):
     return face_mesh.process(image[:,:,::-1])
@@ -79,10 +79,6 @@ def add_filter_on_frame(frame):
         right_eye_status = isOpen(frame, face_mesh_results, 'RIGHT EYE', threshold=5)
         mouth_status = isOpen(frame, face_mesh_results, 'MOUTH', threshold=15)
         
-        # print(f"mouth_status: {mouth_status}")
-        # print(f"left_eye_status: {left_eye_status}")
-        # print(f"right_eye_status: {right_eye_status}")
-        
         for face_num, face_landmarks in enumerate(face_mesh_results.multi_face_landmarks):
             if left_eye_status[face_num] == 'OPEN':
                 frame = overlay(frame, eye, face_landmarks, 'LEFT EYE', mp_face_mesh.FACEMESH_LEFT_EYE)
@@ -94,19 +90,14 @@ def add_filter_on_frame(frame):
     return frame
 
 def main():
-    # Create a socket
-    
-    print("In main")
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 5005))  # You can change the host and port as needed
+    server_socket.bind(('localhost', 5005))
     server_socket.listen(1)
-    
     print("Server is listening for incoming frames...")
     conn, addr = server_socket.accept()
     print(f"Connection established with {addr}")
 
     while True:
-        # Read the frame size first
         raw_size = conn.recv(4)
         if not raw_size:
             break
@@ -122,38 +113,20 @@ def main():
 
         nparr = np.frombuffer(frame_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-        new_frame = add_filter_on_frame(frame)
+        try:
+            new_frame = add_filter_on_frame(frame)
+        except Exception as e:
+            print("Failed to add filter: "+str(e))
+            new_frame = frame
 
-        # Encode the new frame to send back
         _, buffer = cv2.imencode('.jpg', new_frame)
-        output_file_path = 'output.jpg'  # Specify your output file name
+        output_file_path = 'output.jpg' 
         with open(output_file_path, 'wb') as f:
             f.write(buffer)
         conn.sendall(struct.pack('!I', len(buffer)) + buffer.tobytes())
 
     conn.close()
     server_socket.close()
-    # print("Starting app.py")
-    # img_data = sys.stdin.buffer.read()
-    
-    # print("Read image data")
-    # nparr = np.frombuffer(img_data, np.uint8)
-    
-    # print("Read image from buffer")
-    # frame = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-
-    # print("Converted data to frame")
-    # new_frame = add_filter_on_frame(frame)
-    
-    # print("Added filter on frame")
-    # _, buffer = cv2.imencode('.jpg', new_frame)
-    
-    # print("Writing frame to buffer")
-    # sys.stdout.buffer.write(buffer)
-                    
-    # output_file_path = 'output.jpg'  # Specify your output file name
-    # with open(output_file_path, 'wb') as f:
-    #     f.write(buffer)
         
     
 if __name__ == "__main__":

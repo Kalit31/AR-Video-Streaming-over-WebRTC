@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/jpeg"
 	"net"
 	"os"
@@ -35,6 +36,8 @@ var (
 	softwareScaleContext2 *astiav.SoftwareScaleContext
 	scaledFrame2          *astiav.Frame
 
+	processedFrame *astiav.Frame
+
 	filterFrame       *astiav.Frame
 	filterGraph       *astiav.FilterGraph
 	brightnessFilter  *astiav.FilterContext
@@ -48,10 +51,6 @@ var (
 const h264FrameDuration = time.Millisecond * 20
 
 func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
-	/*
-	This function continuously reads video frames from a specified input, decodes them, 
-	scales them, encodes them back into H.264 format, and writes the samples to a WebRTC track.
-	*/
 	astiav.RegisterAllDevices()
 
 	initTestSrc()
@@ -62,7 +61,6 @@ func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
     if err != nil {
         panic(err)
     }
-	fmt.Println("CONNECTION ESTABLISHED WITH PYTHON SRVR")
     defer conn.Close()
 
 	ticker := time.NewTicker(h264FrameDuration)
@@ -75,40 +73,20 @@ func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 		}
 		decodePacket.RescaleTs(videoStream.TimeBase(), decodeCodecContext.TimeBase())
 
-		fmt.Println("SENDING PACKET")
-		// Send the packet
 		if err = decodeCodecContext.SendPacket(decodePacket); err != nil {
 			panic(err)
 		}
 	
 		for {
-			// Read Decoded Frame
 			if err = decodeCodecContext.ReceiveFrame(decodeFrame); err != nil {
 				if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
-					fmt.Println("In error block")
+					fmt.Println("Error while receiving decoded framed: ", err)
 					break
 				}
 				panic(err)
 			}
 
-			fmt.Println("RECEIVED DECODED FRAME")
-
 			initVideoEncoding()
-
-			fmt.Println("DECODE FRAME PIXEL FMT: ", decodeFrame.PixelFormat())
-
-			// fmt.Println("INITIALIZED VIDEO ENCODING")
-
-			// // Send the frame to Python for AR filtering
-			// filteredFrame, err := sendFrameToPython(decodeFrame)
-			// if err != nil {
-			// 	panic(err)
-			// }
-			
-			// fmt.Println("writeH264ToTrackAR: H1")
-
-			// pts++
-			// filteredFrame.SetPts(pts)
 
 			// Scale the video
 			if err = softwareScaleContext.ScaleFrame(decodeFrame, scaledFrame); err != nil {
@@ -119,24 +97,20 @@ func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 			pts++
 			scaledFrame.SetPts(pts)
 
+			processedFrame, err = sendFrameToPython(conn, scaledFrame)
+			if(err != nil){
+				fmt.Println("ERROR WHILE SENDING FRAME TO PYTHON: ", err)
+			}
 
-			fmt.Println("scaledFrame PIXEL FMT: ", scaledFrame.PixelFormat())
-
-			sendFrameToPython(conn, scaledFrame)
-
-			if err = softwareScaleContext2.ScaleFrame(scaledFrame, scaledFrame2); err != nil {
+			if err = softwareScaleContext2.ScaleFrame(processedFrame, scaledFrame2); err != nil {
 				panic(err)
 			}
-			
 
 			// We don't care about the PTS, but encoder complains if unset
 			pts++
 			scaledFrame2.SetPts(pts)
 			
-
-
-			fmt.Println("scaledFrame2 PIXEL FMT: ", scaledFrame2.PixelFormat())
-
+			// fmt.Println("scaledFrame2 PIXEL FMT: ", scaledFrame2.PixelFormat())
 
 			// Encode the frame
 			if err = encodeCodecContext.SendFrame(scaledFrame2); err != nil {
@@ -144,20 +118,11 @@ func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 			}
 
 
-			fmt.Println("writeH264ToTrackAR: H2")
-
-			// if filteredFrame == nil {
-			// 	fmt.Println("writeH264ToTrackAR: filteredFrame is nil")
-			// }
-			// // Encode the filtered frame directly
-			// if err = encodeCodecContext.SendFrame(filteredFrame); err != nil {
-			// 	panic(err)
-			// }
-			// fmt.Println("writeH264ToTrackAR: H3")
+			// fmt.Println("writeH264ToTrackAR: H2")
 
 
 			for {
-				fmt.Println("writeH264ToTrackAR: H4")
+				// fmt.Println("writeH264ToTrackAR: H4")
 				// Read encoded packets and write to file
 				encodePacket = astiav.AllocPacket()
 				if err = encodeCodecContext.ReceivePacket(encodePacket); err != nil {
@@ -167,245 +132,159 @@ func writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 					panic(err)
 				}
 
-				fmt.Println("writeH264ToTrackAR: H5")
+				// fmt.Println("writeH264ToTrackAR: H5")
 				// Write H264 to track
 				if err = track.WriteSample(media.Sample{Data: encodePacket.Data(), Duration: h264FrameDuration}); err != nil {
 					panic(err)
 				}
-				fmt.Println("writeH264ToTrackAR: H")
+				// fmt.Println("writeH264ToTrackAR: H")
 			}
 		}
 	}
 }
 
 func sendFrameToPython(conn net.Conn, frame *astiav.Frame) (*astiav.Frame, error) {	
+	// fmt.Println("sendFrameToPython: H1")
 	width := frame.Width()
 	height := frame.Height()
+	fmt.Println("FRAME WIDTH: ", width)
+	fmt.Println("FRAME HEIGHT: ", height)
+
+	fmt.Println("FRAME LINESIZE: ")
+	lineSize2 := frame.Linesize()
+	for i := 0; i < len(lineSize2); i++ {
+        fmt.Println(lineSize2[i])
+    }
 
 	img := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
 
+	// fmt.Println("sendFrameToPython: H2")
 	frame.Data().ToImage(img)
+	// fmt.Println("sendFrameToPython: H3")
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, nil); err != nil {
-		return nil, err
+		return frame, err
 	}
+	// fmt.Println("sendFrameToPython: H4")
 
     // Send the size of the frame data
     frameSize := uint32(buf.Len())
     if err := binary.Write(conn, binary.BigEndian, frameSize); err != nil {
-        return nil, fmt.Errorf("failed to send frame size: %w", err)
+        return frame, fmt.Errorf("failed to send frame size: %w", err)
     }
 
+	// fmt.Println("sendFrameToPython: H5")
 	// Send the frame data
 	_, err = conn.Write(buf.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("failed to send frame data: %w", err)
+		return frame, fmt.Errorf("failed to send frame data: %w", err)
 	}
 
+	// fmt.Println("sendFrameToPython: H6")
     // Read the size of the processed frame
     var processedFrameSize uint32
     if err := binary.Read(conn, binary.BigEndian, &processedFrameSize); err != nil {
-        return nil, fmt.Errorf("failed to read processed frame size: %w", err)
+        return frame, fmt.Errorf("failed to read processed frame size: %w", err)
     }
 
+	// fmt.Println("sendFrameToPython: H7")
 	// Read the processed frame data
 	processedFrameData := make([]byte, processedFrameSize)
 	_, err = conn.Read(processedFrameData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read processed frame data: %w", err)
+		return frame, fmt.Errorf("failed to read processed frame data: %w", err)
 	}
 
+	// fmt.Println("sendFrameToPython: H8")
 	reader := bytes.NewReader(processedFrameData)
 
     // Decode the JPEG image from the reader
     processed_img, err := jpeg.Decode(reader)
     if err != nil {
-        return nil, fmt.Errorf("failed to decode image: %w", err)
+		fmt.Println("DECODING FAILED: ", err)
+        return frame, fmt.Errorf("failed to decode image: %w", err)
     }
+
+	rgba_img := image.NewRGBA(processed_img.Bounds())
+	draw.Draw(rgba_img, rgba_img.Bounds(), processed_img, processed_img.Bounds().Min, draw.Over)
+
+	fmt.Println("HEIGHT: ", rgba_img.Bounds().Dy())
+	fmt.Println("WIDTH: ", rgba_img.Bounds().Dx())
+	processedFrame = frame.Clone()
+	// processedFrame.SetHeight(processed_img.Bounds().Dy())
+	// processedFrame.SetWidth(processed_img.Bounds().Dx())
+	// processedFrame.SetPixelFormat(astiav.PixelFormatRgba)
+	fmt.Println("AFTER SETTING")
+	fmt.Println("HEIGHT: ", processedFrame.Height())
+	fmt.Println("WIDTH: ", processedFrame.Width())
+	fmt.Println("PIXEL FMT: ", processedFrame.PixelFormat())
+
+	// fmt.Println("sendFrameToPython: H10")
+	// align := 0
+	// if err := processedFrame.AllocBuffer(align); err != nil {
+	// 	return frame, fmt.Errorf("main: allocating buffer failed: %w", err)
+	// }
+	// fmt.Println("sendFrameToPython: H11")
+
+	// // Alloc image
+	// if err := processedFrame.AllocImage(align); err != nil {
+	// 	return frame, fmt.Errorf("main: allocating image failed: %w", err)
+	// }
+
+	// fmt.Println("sendFrameToPython: H12")
+	// if err := processedFrame.MakeWritable(); err != nil {
+	// 	return frame, fmt.Errorf("main: making frame writable failed: %w", err)
+	// }
+
+	// iswritable := processedFrame.IsWritable()
+	// fmt.Println("IS WRITABLE: ", iswritable)
+
+	// // processedFrame.
+
+	fmt.Println("FRAME ISWRITABLE?: ", processedFrame.IsWritable())
+
+	fmt.Println("sendFrameToPython: H12")
+	if err := processedFrame.MakeWritable(); err != nil {
+		return frame, fmt.Errorf("main: making frame writable failed: %w", err)
+	}
+
+	fmt.Println("LINESIZE: ")
+	lineSize := processedFrame.Linesize()
+	for i := 0; i < len(lineSize); i++ {
+        fmt.Println(lineSize[i])
+    }
+
+	fmt.Println("sendFrameToPython: H13")
+	if err := processedFrame.Data().FromImage(rgba_img);  err != nil {
+		return frame, fmt.Errorf("converting processed image to frame failed: %w", err)
+	}
+
+	fmt.Println("sendFrameToPython: H14")
 
 	filename := "processed.jpg"
 	file, err := os.Create(filename)
     if err != nil {
-        return nil, fmt.Errorf("failed to decode image: %w", err)
+        return frame, fmt.Errorf("failed to decode image: %w", err)
     }
     defer file.Close()
+	fmt.Println("sendFrameToPython: H15")
 
 	err = jpeg.Encode(file, processed_img, nil)
     if err != nil {
-        return nil, fmt.Errorf("failed to decode image: %w", err)
+        return frame, fmt.Errorf("failed to decode image: %w", err)
     }
-
-
-	// Call the Python script
-	// cmd := exec.Command("python3", "/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/app.py")
-
-	// // Set stdin and stdout
-	// cmd.Stdin = bytes.NewReader(buf.Bytes())
-	// var out bytes.Buffer
-	// cmd.Stdout = &out
-	// cmd.Stderr = &out
-
-	// err := cmd.Run()
-	// if err != nil {
-	// 	fmt.Println("ERROR WHILE EXECUTING PYTHON SCRIPT: ", err)
-	// 	fmt.Println("OUT: ", out.String())
-	// 	return nil, err
-	// }
-
-	// // Read the output image (JPEG data) from stdout
-	// _, err = jpeg.Decode(&out)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	return frame, nil
-}
-
-// Convert ASTIAV frame to Go image
-func astiavFrameToImage(frame *astiav.Frame) (image.Image, error) {
-	fmt.Println("IN astiavFrameToImage")
-	// Create an image from the frame's data
-	width := frame.Width()
-	height := frame.Height()
-
-	// Create a new RGBA image
-	rgbaImg := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
-	fmt.Println("CREATED A TEMPLATE FOR RGB IMAGE")
-
-	// Assuming the frame is in YUV420P format, you need to convert it to RGBA
-	// You may need to adapt this based on your actual pixel format
-	// yPlane, _ := frame.Data().Bytes(0)
-	// uPlane, _ := frame.Data().Bytes(1)
-	// vPlane, _ := frame.Data().Bytes(2)
-	// a , _ := frame.Data().Bytes(3)
-	// b , _ := frame.Data().Bytes(4)
-
-	fmt.Println("astiavFrameToImage: H1")
-	frame.Data().ToImage(rgbaImg)
-	fmt.Println("astiavFrameToImage: H2")
-
-
-
-	// fmt.Println("astiavFrameToImage: H2")
-	// fmt.Println("WIDTH: ", width)
-	// fmt.Println("height: ", height)
-	// fmt.Println("len(yPlane): ", len(yPlane))
-	// fmt.Println("len(uPlane): ", len(uPlane))
-	// fmt.Println("len(vPlane): ", len(vPlane))
-	// fmt.Println("len(a): ", len(a))
-	// fmt.Println("len(b): ", len(b))
-	
-	// for y := 0; y < height; y++ {
-	// 	for x := 0; x < width; x += 2 {
-	// 		fmt.Println("astiavFrameToImage: H3")
-	// 		// Get Y values
-	// 		y0 := yPlane[y*width+x]
-	// 		y1 := yPlane[y*width+x+1]
-
-	// 		// Get U and V values (downsampled)
-	// 		u := uPlane[(y/2)*width/2+x/2]
-	// 		v := vPlane[(y/2)*width/2+x/2]
-
-	// 		// Convert YUV to RGBA for first pixel
-	// 		r0, g0, b0 := yuvToRGB(y0, u, v)
-	// 		rgbaImg.Set(x, y, color.RGBA{r0, g0, b0, 255})
-
-	// 		// Convert YUV to RGBA for second pixel
-	// 		r1, g1, b1 := yuvToRGB(y1, u, v)
-	// 		rgbaImg.Set(x+1, y, color.RGBA{r1, g1, b1, 255})
-	// 		fmt.Println("astiavFrameToImage: H4")
-	// 	}
-	// }
-
-	return rgbaImg, nil
+	fmt.Println("sendFrameToPython: H16")
+	return processedFrame, nil
 }
 
 
-func imageToASTIAVFrame(img image.Image) *astiav.Frame {
-	// Get the image dimensions
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-
-	fmt.Println("In imageToASTIAVFrame: width: ", width)
-	fmt.Println("In imageToASTIAVFrame: height: ", height)
-
-	// Create a new ASTIAV frame
-	frame := astiav.AllocFrame()
-	if frame == nil {
-		return nil
-	}
-
-	// Set the frame dimensions
-	frame.SetWidth(width)
-	frame.SetHeight(height)
-	frame.SetPixelFormat(astiav.PixelFormatYuv420P)
-
-	// Allocate data buffers for Y, U, and V planes
-	yPlane := make([]byte, width*height)
-	uPlane := make([]byte, (width/2)*(height/2))
-	vPlane := make([]byte, (width/2)*(height/2))
-
-	// Fill the YUV planes from the RGBA image
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			r, g, b, _ := img.At(x, y).RGBA()
-
-			// Convert RGB to YUV
-			Y := 0.299*float64(r/256) + 0.587*float64(g/256) + 0.114*float64(b/256)
-			U := -0.14713*float64(r/256) - 0.28886*float64(g/256) + 0.436*float64(b/256)
-			V := 0.615*float64(r/256) - 0.51499*float64(g/256) - 0.10001*float64(b/256)
-
-			// Fill Y plane
-			yPlane[y*width+x] = uint8(clamp(Y))
-
-			// Fill U and V planes (downsampling by 2)
-			if x%2 == 0 && y%2 == 0 {
-				uPlane[(y/2)*(width/2)+(x/2)] = uint8(clamp(U + 128)) // Adjust U
-				vPlane[(y/2)*(width/2)+(x/2)] = uint8(clamp(V + 128)) // Adjust V
-			}
-		}
-	}
-
-	// frame.Data().FromImage()
-	// frame.AllocBuffer(0)
-	
-
-	// Set the planes in the frame
-	return frame
-}
-
-
-
-func yuvToRGB(y uint8, u uint8, v uint8) (uint8, uint8, uint8) {
-	Y := float64(y)
-	U := float64(u) - 128
-	V := float64(v) - 128
-
-	// Convert YUV to RGB
-	r := Y + 1.402*V
-	g := Y - 0.344136*U - 0.714136*V
-	b := Y + 1.772*U
-
-	return uint8(clamp(r)), uint8(clamp(g)), uint8(clamp(b))
-}
-
-func clamp(value float64) float64 {
-	if value < 0 {
-		return 0
-	} else if value > 255 {
-		return 255
-	}
-	return value
-}
-
-
+/*
 func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
-	/*
+	
 	This function continuously reads video frames from a specified input, decodes them, 
 	scales them, encodes them back into H.264 format, and writes the samples to a WebRTC track.
-	*/
+	
 	astiav.RegisterAllDevices()
 
 	initTestSrc()
@@ -482,6 +361,7 @@ func writeH264ToTrack(track *webrtc.TrackLocalStaticSample) {
 		}
 	}
 }
+*/
 
 func initTestSrc() {
 	if inputFormatContext = astiav.AllocFormatContext(); inputFormatContext == nil {

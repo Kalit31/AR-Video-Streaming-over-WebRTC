@@ -3,7 +3,7 @@ module websocket_tests
 go 1.22.6
 
 require (
-	github.com/asticode/go-astiav v0.20.0
+	github.com/asticode/go-astiav v0.24.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v3 v3.3.3
 )
