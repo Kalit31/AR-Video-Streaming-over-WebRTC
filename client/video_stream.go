@@ -35,7 +35,7 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
 
     fmt.Println("Writing to tracks")
     vp := NewVideoProcessor()
-    go vp.writeH264ToTrackAR(videoTrack)
+    go vp.writeH264ToTrackFFmpegFilters(videoTrack)
 
     return nil
 }
@@ -109,6 +109,76 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 				// Write H264 to track
 				if err = track.WriteSample(media.Sample{Data: vp.encodePacket.Data(), Duration: h264FrameDuration}); err != nil {
 					panic(err)
+				}
+			}
+		}
+	}
+}
+
+func (vp *VideoProcessor) writeH264ToTrackFFmpegFilters(track *webrtc.TrackLocalStaticSample) {
+	defer vp.freeVideoCoding()
+	vp.initFilters()
+
+	var err error
+
+    ticker := time.NewTicker(h264FrameDuration)
+	for ; true; <-ticker.C {
+		if err = vp.inputFormatContext.ReadFrame(vp.decodePacket); err != nil {
+			if errors.Is(err, astiav.ErrEof) {
+				break
+			}
+			panic(err)
+		}
+		vp.decodePacket.RescaleTs(vp.videoStream.TimeBase(), vp.decodeCodecContext.TimeBase())
+
+		if err = vp.decodeCodecContext.SendPacket(vp.decodePacket); err != nil {
+			panic(err)
+		}
+	
+		for {
+			if err = vp.decodeCodecContext.ReceiveFrame(vp.decodeFrame); err != nil {
+				if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
+					fmt.Println("Error while receiving decoded framed: ", err)
+					break
+				}
+				panic(err)
+			}
+			
+			if err = vp.buffersrcContext.AddFrame(vp.decodeFrame, astiav.NewBuffersrcFlags(astiav.BuffersrcFlagKeepRef)); err != nil {
+				err = fmt.Errorf("main: adding frame failed: %w", err)
+				return
+			}
+
+			for{
+				vp.filterFrame.Unref()
+				if err = vp.buffersinkContext.GetFrame(vp.filterFrame, astiav.NewBuffersinkFlags()); err != nil {
+					if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
+						break
+					}
+					panic(err)
+				}
+	
+				vp.pts++
+				vp.filterFrame.SetPts(vp.pts)
+
+				if err = vp.encodeCodecContext.SendFrame(vp.filterFrame); err != nil {
+					panic(err)
+				}
+
+				for {
+					// Read encoded packets
+					vp.encodePacket = astiav.AllocPacket()
+					if err = vp.encodeCodecContext.ReceivePacket(vp.encodePacket); err != nil {
+						if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
+							break
+						}
+						panic(err)
+					}
+	
+					// Write H264 to track
+					if err = track.WriteSample(media.Sample{Data: vp.encodePacket.Data(), Duration: h264FrameDuration}); err != nil {
+						panic(err)
+					}
 				}
 			}
 		}
