@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os/exec"
 	"time"
 
 	"github.com/asticode/go-astiav"
@@ -35,15 +36,34 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
 
     fmt.Println("Writing to tracks")
     vp := NewVideoProcessor()
-    go vp.writeH264ToTrackFFmpegFilters(videoTrack)
-
+    go vp.writeH264ToTrackAR(videoTrack)
+	// go vp.writeH264ToTrackFFmpegFilters(videoTrack)
     return nil
+}
+
+func establishSSHTunnel() (*exec.Cmd, error) {
+	cmd := exec.Command("ssh", "-L", "5005:127.0.0.1:5005", "-J", "fastvideo", "-i", "~/.ssh/picluster", "epl@10.100.1.165")
+	err := cmd.Start()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start SSH tunnel: %w", err)
+	}
+
+	fmt.Println("SSH Tunnel established")
+	return cmd, nil
+}
+
+func closeSSHTunnel(cmd *exec.Cmd) error {
+	err := cmd.Wait()
+	if err != nil {
+		return fmt.Errorf("error waiting for SSH tunnel process: %w", err)
+	}
+	return nil
 }
 
 func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 	defer vp.freeVideoCoding()
 
-    conn, err := net.Dial("tcp", "localhost:5005")
+    conn, err := net.Dial("tcp", "127.0.0.1:5005")
     if err != nil {
         panic(err)
     }
@@ -51,6 +71,8 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 
     ticker := time.NewTicker(h264FrameDuration)
 	for ; true; <-ticker.C {
+		startTime := time.Now()
+		
 		if err = vp.inputFormatContext.ReadFrame(vp.decodePacket); err != nil {
 			if errors.Is(err, astiav.ErrEof) {
 				break
@@ -66,7 +88,7 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 		for {
 			if err = vp.decodeCodecContext.ReceiveFrame(vp.decodeFrame); err != nil {
 				if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
-					fmt.Println("Error while receiving decoded framed: ", err)
+					// fmt.Println("Error while receiving decoded framed: ", err)
 					break
 				}
 				panic(err)
@@ -79,11 +101,13 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 			vp.pts++
 			vp.rgbaFrame.SetPts(vp.pts)
 
-
+			startTime2 := time.Now()
             vp.arFilterFrame, err = OverlayARFilter(conn, vp.rgbaFrame)
 			if err != nil {
 				fmt.Println("Failed to add AR filter to frame: ", err)
 			}
+			elapsedTime2 := time.Since(startTime2)
+			fmt.Printf("Time taken for adding AR filter: %v\n", elapsedTime2) 
 
 			if err = vp.convertToYUV420PContext.ScaleFrame(vp.arFilterFrame, vp.yuv420PFrame); err != nil {
 				panic(err)
@@ -112,6 +136,8 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 				}
 			}
 		}
+		elapsedTime := time.Since(startTime)
+		fmt.Printf("Time taken from reading the packet, decoding, adding AR filter, encoding to writing in the WebRTC track: %v\n", elapsedTime) 
 	}
 }
 
@@ -123,6 +149,7 @@ func (vp *VideoProcessor) writeH264ToTrackFFmpegFilters(track *webrtc.TrackLocal
 
     ticker := time.NewTicker(h264FrameDuration)
 	for ; true; <-ticker.C {
+		startTime := time.Now()
 		if err = vp.inputFormatContext.ReadFrame(vp.decodePacket); err != nil {
 			if errors.Is(err, astiav.ErrEof) {
 				break
@@ -182,5 +209,7 @@ func (vp *VideoProcessor) writeH264ToTrackFFmpegFilters(track *webrtc.TrackLocal
 				}
 			}
 		}
+		elapsedTime := time.Since(startTime)
+		fmt.Printf("Time taken from reading the packet, decoding, adding AR filter, encoding to writing in the WebRTC track: %v\n", elapsedTime) 
 	}
 }

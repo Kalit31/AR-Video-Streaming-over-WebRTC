@@ -3,17 +3,15 @@ import sys
 import cv2
 import itertools
 import numpy as np
-from time import time
 import mediapipe as mp
-import matplotlib.pyplot as plt
 import socket
 import struct
 
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh_videos = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5, min_tracking_confidence=0.3)
-eye = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/filter_imgs/eye.jpg')
-mouth = cv2.imread('/home/kalit/Desktop/GeorgiaTech/Fall_2024/CS_8903/WebRTC_research/ar-filters/filter_imgs/smile.png')
+eye = cv2.imread('/home/epl/Desktop/WebRTC_research/ar-filters/filter_imgs/eye.jpg')
+mouth = cv2.imread('/home/epl/Desktop/WebRTC_research/ar-filters/filter_imgs/smile.png')
 
 def detectFacialLandmarks(image, face_mesh):
     return face_mesh.process(image[:,:,::-1])
@@ -120,9 +118,10 @@ def main():
             new_frame = frame
 
         _, buffer = cv2.imencode('.jpg', new_frame)
-        output_file_path = 'output.jpg' 
-        with open(output_file_path, 'wb') as f:
-            f.write(buffer)
+        # output_file_path = 'output.jpg' 
+        # with open(output_file_path, 'wb') as f:
+        #     f.write(buffer)
+        print("Sending back processed image")
         conn.sendall(struct.pack('!I', len(buffer)) + buffer.tobytes())
 
     conn.close()
