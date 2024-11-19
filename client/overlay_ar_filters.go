@@ -114,7 +114,7 @@ func OverlayARFilter(conn net.Conn, frame *astiav.Frame) (*astiav.Frame, error) 
 		return frame, err
 	}
 
-	dumpImageToFile("processed.jpg", processed_image)
+	// dumpImageToFile("processed.jpg", processed_image)
 
 	return processed_frame, nil
 }
