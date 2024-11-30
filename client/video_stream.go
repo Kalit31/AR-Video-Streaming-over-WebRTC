@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"log"
 	"net"
 	"os/exec"
@@ -11,9 +12,17 @@ import (
 	"github.com/asticode/go-astiav"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
+	"gonum.org/v1/plot"
+	"gonum.org/v1/plot/plotter"
+	"gonum.org/v1/plot/vg"
 )
 
-func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.TrackLocalStaticSample) error {
+var (
+    timeChan = make(chan float64)
+)
+
+
+func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.TrackLocalStaticSample, generate_stats bool) error {
     // Handle incoming tracks
     peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
         fmt.Println("Track received:", track.Kind())
@@ -36,6 +45,9 @@ func openCameraFeed(peerConnection *webrtc.PeerConnection, videoTrack *webrtc.Tr
 
     fmt.Println("Writing to tracks")
     vp := NewVideoProcessor()
+	if(generate_stats){
+		go generate_plots()
+	}
     go vp.writeH264ToTrackAR(videoTrack)
 	// go vp.writeH264ToTrackFFmpegFilters(videoTrack)
     return nil
@@ -59,6 +71,59 @@ func closeSSHTunnel(cmd *exec.Cmd) error {
 	}
 	return nil
 }
+
+func generate_plots() {
+    p := plot.New()
+    p.Title.Text = "Plot for processing time for each frame"
+    p.X.Label.Text = "Frame"
+    p.Y.Label.Text = "Time (ms)"
+    p.Add(plotter.NewGrid())
+
+    line, err := plotter.NewLine(plotter.XYs{})
+    if err != nil {
+        panic(err)
+    }
+    line.Color = color.RGBA{B: 255, A: 255}
+    p.Add(line)
+
+	frame_no := 0
+    for data := range timeChan {
+		fmt.Println("Received time: ", data)
+        line.XYs = append(line.XYs, plotter.XY{X: float64(frame_no), Y: data})
+        frame_no += 1
+        
+        if len(line.XYs) > 200 {
+            line.XYs = line.XYs[1:]
+        }
+
+        xMin := float64(frame_no) - 200.0
+        if xMin < 0 {
+            xMin = 0
+        }
+        p.X.Min = xMin
+        p.X.Max = float64(frame_no)
+
+        yMin := data
+        yMax := data
+        for _, point := range line.XYs {
+            if point.Y < yMin {
+                yMin = point.Y
+            }
+            if point.Y > yMax {
+                yMax = point.Y
+            }
+        }
+        padding := (yMax - yMin) * 0.1
+        p.Y.Min = yMin - padding
+        p.Y.Max = yMax + padding
+
+        filename := fmt.Sprintf("plots/plot_%d.png", frame_no)
+        if err := p.Save(6*vg.Inch, 4*vg.Inch, filename); err != nil {
+            panic(err)
+        }
+    }
+}
+
 
 func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSample) {
 	defer vp.freeVideoCoding()
@@ -106,8 +171,8 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 			if err != nil {
 				fmt.Println("Failed to add AR filter to frame: ", err)
 			}
-			elapsedTime2 := time.Since(startTime2)
-			fmt.Printf("Time taken for adding AR filter: %v\n", elapsedTime2) 
+			_ = time.Since(startTime2)
+			// timeChan <- float64(elapsedTime2.Milliseconds())
 
 			if err = vp.convertToYUV420PContext.ScaleFrame(vp.arFilterFrame, vp.yuv420PFrame); err != nil {
 				panic(err)
@@ -137,7 +202,7 @@ func (vp *VideoProcessor) writeH264ToTrackAR(track *webrtc.TrackLocalStaticSampl
 			}
 		}
 		elapsedTime := time.Since(startTime)
-		fmt.Printf("Time taken from reading the packet, decoding, adding AR filter, encoding to writing in the WebRTC track: %v\n", elapsedTime) 
+		timeChan <- float64(elapsedTime.Milliseconds())
 	}
 }
 
@@ -165,12 +230,13 @@ func (vp *VideoProcessor) writeH264ToTrackFFmpegFilters(track *webrtc.TrackLocal
 		for {
 			if err = vp.decodeCodecContext.ReceiveFrame(vp.decodeFrame); err != nil {
 				if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
-					fmt.Println("Error while receiving decoded framed: ", err)
+					// fmt.Println("Error while receiving decoded framed: ", err)
 					break
 				}
 				panic(err)
 			}
 			
+			// startTime2 := time.Now()
 			if err = vp.buffersrcContext.AddFrame(vp.decodeFrame, astiav.NewBuffersrcFlags(astiav.BuffersrcFlagKeepRef)); err != nil {
 				err = fmt.Errorf("main: adding frame failed: %w", err)
 				return
@@ -208,8 +274,10 @@ func (vp *VideoProcessor) writeH264ToTrackFFmpegFilters(track *webrtc.TrackLocal
 					}
 				}
 			}
+			// elapsedTime2 := time.Since(startTime2)
+			// timeChan <- float64(elapsedTime2.Milliseconds())
 		}
 		elapsedTime := time.Since(startTime)
-		fmt.Printf("Time taken from reading the packet, decoding, adding AR filter, encoding to writing in the WebRTC track: %v\n", elapsedTime) 
+		timeChan <- float64(elapsedTime.Milliseconds())
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func Run() {
+func Run(generate_stats bool) {
     // Connect to the WebSocket server
     url := "ws://localhost:8080/ws"
     conn, _, err := websocket.DefaultDialer.Dial(url, nil)
@@ -50,7 +50,7 @@ func Run() {
     <-connectionEstablishedChan
     fmt.Println("Successfully established a WebRTC connection between clients")
 
-    openCameraFeed(userPeerConnection, userVideoTrack)
+    openCameraFeed(userPeerConnection, userVideoTrack, generate_stats)
 
 	select {}
 }

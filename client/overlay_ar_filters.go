@@ -22,7 +22,7 @@ func processImageFrame(conn net.Conn, frame *astiav.Frame) error {
 	img := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
 	frame.Data().ToImage(img)
 
-	// Encode the RGBA image to bugger
+	// Encode the RGBA image to buffer
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, nil); err != nil {
 		return err

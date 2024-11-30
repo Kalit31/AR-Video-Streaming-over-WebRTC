@@ -228,8 +228,8 @@ func (vp *VideoProcessor) initFilters() error {
 	inputs.SetPadIdx(0)
 	inputs.SetNext(nil)
 
-	// Link buffersrc and buffersink through the eq filter for brightness
-	if err := vp.filterGraph.Parse("eq=brightness=0.5", inputs, outputs); err != nil {
+	// Link buffersrc and buffersink through the eq filter for brightness, vertically flip the image frame
+	if err := vp.filterGraph.Parse("eq=brightness=0.5,vflip", inputs, outputs); err != nil {
 		return err
 	}
 

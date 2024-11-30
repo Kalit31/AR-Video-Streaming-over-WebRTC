@@ -116,3 +116,9 @@ Mediapipe issues (GPU + Jetson :( )
 4. https://github.com/google-ai-edge/mediapipe/issues/1651#issuecomment-790176010
 5. https://github.com/google-ai-edge/mediapipe/issues/1344
 6. https://github.com/google-ai-edge/mediapipe/issues/5736
+
+
+jetson benchmark suites - work on images? object detection filters?
+ar-benchmarks suite
+
+
